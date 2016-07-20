@@ -22,19 +22,75 @@ public class InvertedIndex implements Serializable{
     double now = System.currentTimeMillis();
     static String path = "/home/aalto/IdeaProjects/PredictiveIndex/src/PredictiveIndex/tmp/ps.ser";
     private HashMap<String, Integer> termsMap;
+    private HashMap<String, Integer[]> map;
     private HashMap<String, Integer> docsMap;
     private HashMap<Integer,Integer> freqTermDoc;
+    private File invertedIndex;
 
+    public InvertedIndex(int distance, String colletion) {
+        // Class constructor
 
-    public InvertedIndex(int distance) {
-        this.doc = 0;
-        this.distance = distance;
-        this.buffer = new int [20000000][5];         //1G buffer
         this.stats = new int[5];
+        this.map = new HashMap<>();
         this.freqTermDoc = new HashMap<>();
         this.termsMap = new HashMap<>();
         this.docsMap = new HashMap<>();
+        this.doc = 0;
+        this.distance = distance;
+        this.buffer = new int [20000000][5];         //1G buffer
     }
+
+    // *****************************************************************************************
+    // 1TH PHASE - GET METADATA
+    // *****************************************************************************************
+
+    //PROCESS DATA TO GET INFO *****************************************************************************************
+
+    public void getCollectionMetadata(String folder) throws IOException {
+        doc = 0;
+        start =  System.currentTimeMillis();
+        for(File file : new File(folder).listFiles()){
+            ArrayList<LinkedList> fowardIndex = new ArrayList<LinkedList>();
+            System.out.println("Now processing file: "+ file);
+            GZIPInputStream gzInputStream=new GZIPInputStream(new FileInputStream(file));
+            DataInputStream inStream=new DataInputStream(gzInputStream);
+            WarcRecord thisWarcRecord;
+            while ((thisWarcRecord=WarcRecord.readNextWarcRecord(inStream))!=null) {
+                if (thisWarcRecord.getHeaderRecordType().equals("response")) {
+                    //processWARCRecord((String []) recordData.getLast());
+                    LinkedList<Object> recordData = thisWarcRecord.getCleanRecord();
+                    this.processWARCRecord((String []) recordData.getLast(), (String) recordData.getFirst());
+                    fowardIndex.add(recordData);
+                    doc++;
+                }
+                if(doc%1000==0) System.out.println(doc);
+            }
+            inStream.close();
+            serialize(fowardIndex,file.getName());
+
+
+        }this.hash2CSV();
+
+    }
+
+    public void processWARCRecord(String [] words, String title){
+        this.docsMap.putIfAbsent(title, this.stats[0]);
+        HashMap<String, Integer> auxHash= new HashMap<>();
+        for(String word : words){
+            if(auxHash.putIfAbsent(word,1)==null){
+                if(this.termsMap.putIfAbsent(word,stats[2])==null){
+                    this.stats[2]++;
+                }else{
+                    this.freqTermDoc.merge(getWId(word), 1, Integer::sum);
+                }
+
+            }
+        }
+        this.stats[0]++;
+        this.stats[1] += words.length;
+    }
+
+    //STORE INFO *******************************************************************************************************
 
     public void fetchGInfo() throws FileNotFoundException {
         //this methods returns the global statistics about the dataset if already processed.
@@ -60,64 +116,32 @@ public class InvertedIndex implements Serializable{
         }
     }
 
-    public void recordStats(String [] words, String title){
-        this.docsMap.putIfAbsent(title, this.stats[0]);
-        HashMap<String, Integer> auxHash= new HashMap<>();
-        for(String word : words){
-            if(auxHash.putIfAbsent(word,1)==null){
-                if(this.termsMap.putIfAbsent(word,stats[2])==null){
-                    this.stats[2]++;
-                }else{
-                    this.freqTermDoc.merge(getWId(word), 1, Integer::sum);
-                }
+    public void hash2CSV() throws IOException {
+        //this function save the map term-freq to disk
 
+        Iterator it = this.freqTermDoc.entrySet().iterator();
+        try(FileWriter fw = new FileWriter("termsOccurence.csv", true);
+            BufferedWriter bw = new BufferedWriter(fw);
+            PrintWriter out = new PrintWriter(bw)) {
+            while (it.hasNext()) {
+                Map.Entry pair = (Map.Entry)it.next();
+                String aux = pair.getKey() + "," + pair.getValue();
+                out.println(aux);
+                it.remove(); // avoids a ConcurrentModificationException
             }
         }
-        this.stats[0]++;
-        this.stats[1] += words.length;
     }
 
-    public void naturalSelection(){
-        /*int [][] aux = new int[][] {
-                {3L,4L},
-                {1L,5L},
-                {3L,6L},
-                {2L,10L},
-                {2L,11L},
-                {2L,12L},
-                {1L,2L},
-                {3L,1L},
-                {3L,2L},
-                {2L,9L},
-                {1L,3L},
-                {3L,4L},
-                {1L,5L},
-                {3L,6L},
-                {2L,1L},
-                {2L,1L},
-                {2L,12L},
-                {1L,1L},
-                {1L,2L},
-                {3L,7L},
-                {3L,8L},
-                {2L,9L},
-                {1L,3L},
-                {1L,2L},
-                {1L,2L},
-                {3L,7L},
-                {3L,8L},
-                {2L,9L},
-                {2L,44L}
-        };
-        this.buffer= aux;*/
+    //EXTRA ************************************************************************************************************
 
+    // *****************************************************************************************
+    // 2ND PHASE - BUILD INVERTED INDEX
+    // *****************************************************************************************
+
+    public void naturalSelection(){
         System.out.println("TIME TO CLEAN. Processed docs: " + doc);
         now =System.currentTimeMillis();
         this.sortBuffer();
-
-        /*for(int k = 0; k<aux.length; k++){
-            System.out.println(this.buffer[k][0]+" "+this.buffer[k][1]);
-        }*/
 
         int auxValue = this.buffer[0][0];
         int shifter = 0;
@@ -139,10 +163,6 @@ public class InvertedIndex implements Serializable{
             }
 
         }
-
-        /*for(int k = 0; k<aux.length*0.2; k++){
-            System.out.println(this.buffer[k][0]+" "+this.buffer[k][1]);
-        }*/
 
         System.out.println("Sorting Time: " + (System.currentTimeMillis()-now) + "ms. Processing Time:" + 1000/((System.currentTimeMillis()-start)/doc) +"doc/sec");
     }
@@ -175,10 +195,11 @@ public class InvertedIndex implements Serializable{
         return (int) BM25;
     }
 
-    public void flushHashMap(HashMap<Integer, Integer> freq, HashSet<String> pairs, int docSize, int docId){
+    public void map2Buffer(HashMap<Integer, Integer> freq, HashSet<String> pairs, int docSize, int docId){
+        //We want to avoid huge hashmaps and for each warc document we flush it in a static data structure
+
         String pair;
         String [] words;
-        //We want to avoid huge hashmaps and for each warc document we flush it in a static data structure
         Iterator it = pairs.iterator();
         while (it.hasNext()) {
             pair = it.next().toString();
@@ -213,7 +234,7 @@ public class InvertedIndex implements Serializable{
                 this.freqTermDoc.merge(getWId(words[wIx]), 1, Integer::sum);
             }
         }
-        this.flushHashMap(auxFreq, auxPair, words.length ,getDId(title));
+        this.map2Buffer(auxFreq, auxPair, words.length ,getDId(title));
     }
 
     public int getWId(String word){
@@ -226,19 +247,7 @@ public class InvertedIndex implements Serializable{
 
 
 
-    public void hash2CSV() throws IOException {
-        Iterator it = this.freqTermDoc.entrySet().iterator();
-        try(FileWriter fw = new FileWriter("termsOccurence.csv", true);
-            BufferedWriter bw = new BufferedWriter(fw);
-        PrintWriter out = new PrintWriter(bw)) {
-            while (it.hasNext()) {
-                Map.Entry pair = (Map.Entry)it.next();
-                String aux = pair.getKey() + "," + pair.getValue();
-                out.println(aux);
-                it.remove(); // avoids a ConcurrentModificationException
-            }
-        }
-    }
+    // STORE INVERTED INDEX ********************************************************************************************
 
     public void serialize(Object e, String file){
 
@@ -300,34 +309,11 @@ public class InvertedIndex implements Serializable{
         }
     }
 
-    public void warcHandler(String folder) throws IOException {
-        doc = 0;
-        start =  System.currentTimeMillis();
-        for(File file : new File(folder).listFiles()){
-            ArrayList<LinkedList> fowardIndex = new ArrayList<LinkedList>();
-            System.out.println("Now processing file: "+ file);
-            GZIPInputStream gzInputStream=new GZIPInputStream(new FileInputStream(file));
-            DataInputStream inStream=new DataInputStream(gzInputStream);
-            WarcRecord thisWarcRecord;
-            while ((thisWarcRecord=WarcRecord.readNextWarcRecord(inStream))!=null) {
-                if (thisWarcRecord.getHeaderRecordType().equals("response")) {
-                    //recordStats((String []) recordData.getLast());
-                    LinkedList<Object> recordData = thisWarcRecord.getCleanRecord();
-                    this.recordStats((String []) recordData.getLast(), (String) recordData.getFirst());
-                    fowardIndex.add(recordData);
-                    doc++;
-                }
-                if(doc%1000==0) System.out.println(doc);
-            }
-            inStream.close();
-            serialize(fowardIndex,file.getName());
 
-
-        }this.hash2CSV();
-
-    }
 
     public void dumpBuffer(String name){
+        // Save the partial inverted index (a.k.a buffer) to disk
+
         String prefix;
         StringBuilder toFlush = new StringBuilder();
         for(int [] entry : this.buffer){
@@ -347,6 +333,8 @@ public class InvertedIndex implements Serializable{
     }
 
     public void dumpBuffer2(String name){
+        // Save the partial inverted index (a.k.a buffer) to disk
+
         this.sortBuffer();
         StringBuilder toFlush = new StringBuilder();
         for(int [] entry : this.buffer) {
@@ -381,10 +369,6 @@ public class InvertedIndex implements Serializable{
         }
     }
 
-
-    public static void prova(){
-    }
-
     public static void main(String [] args) throws IOException {
         String folder = "/home/aalto/IdeaProjects/PredictiveIndex/data/test";
         InvertedIndex ps;
@@ -394,7 +378,7 @@ public class InvertedIndex implements Serializable{
             System.out.println("Predictive Index Deserialized");
         }else {
             ps = new InvertedIndex(2);
-            ps.warcHandler(folder);
+            ps.getCollectionMetadata(folder);
             ps.buffer = null;
             ps.serialize(ps, path);
         }
