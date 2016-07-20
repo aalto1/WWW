@@ -1,0 +1,9 @@
+sort -n -r -m -k1 -k2 -k3 -k4 00.warc.gz.ser.txt 01.warc.gz.ser.txt > merge.txt
+
+awk -F',' -v OFS=',' '{k=$1 OFS $2; a[k]=k in a?a[k] OFS $4:$4} END{for(k in a) print k, a[k]}' merge.txt > posting.txt
+
+awk -F',' '{print NF","$0}' posting.txt > count.txt
+
+sort -n count.txt > finale.txt
+
+cut --complement -f 1 -d, finale.txt > finale2.txt
