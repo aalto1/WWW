@@ -22,11 +22,12 @@ public class InvertedIndex implements Serializable {
     static final String fIndexPath = path + "/fowardIndex";
     static final String ser = ".ser";
     static double start;
-    static double now = System.currentTimeMillis();
+    static double now;
+    static double deserializeTime = 0;
 
     final private int distance = 5;
     private int pointer = 0;
-    public int[][] buffer;
+    private int[][] buffer;
     private int[] stats;                                       //1-numberofdocs,2-wordcounter,3-unique words
     private int doc;
     private HashMap<String, Integer> termsMap;
@@ -42,7 +43,7 @@ public class InvertedIndex implements Serializable {
         this.termsMap = new HashMap<>();
         this.docsMap = new HashMap<>();
         this.doc = 0;
-        this.buffer = new int[10000000][5];         //1G buffer
+        this.buffer = new int[10000000][5];
     }
 
     public InvertedIndex(HashMap<String, Integer> termsMap, HashMap<Integer, Integer> freqTermDoc, HashMap<String, Integer> docsMap, int[] stats) {
@@ -57,7 +58,6 @@ public class InvertedIndex implements Serializable {
         this.stats = stats;
 
     }
-
 
 
     // *****************************************************************************************
@@ -114,49 +114,7 @@ public class InvertedIndex implements Serializable {
         this.stats[1] += words.length;
     }
 
-    //STORE INFO *******************************************************************************************************
-
-    public void fetchGInfo() throws FileNotFoundException {
-        //this methods returns the global statistics about the dataset if already processed.
-
-        Scanner scanner = new Scanner(new File("gstats.txt"), "UTF-8");
-        for (int k = 0; scanner.hasNext(); k++) {
-            this.stats[k] = Integer.valueOf(scanner.next());
-        }
-    }
-
-    public void dumpGInfo() throws FileNotFoundException {
-        //this methods saves the global statistics about the whole dataset.
-
-        try (FileWriter fw = new FileWriter("gstats.txt", true);
-             BufferedWriter bw = new BufferedWriter(fw);
-             PrintWriter out = new PrintWriter(bw)) {
-            for (int k = 0; k < this.stats.length; k++) {
-                out.println(this.stats[k]);
-            }
-        } catch (IOException e) {
-            System.out.println("No dump, No party!");
-            System.exit(1);
-        }
-    }
-
-    public void hash2CSV() throws IOException {
-        //this function save the map term-freq to disk
-
-        Iterator it = this.freqTermDoc.entrySet().iterator();
-        try (FileWriter fw = new FileWriter("termsOccurence.csv", true);
-             BufferedWriter bw = new BufferedWriter(fw);
-             PrintWriter out = new PrintWriter(bw)) {
-            while (it.hasNext()) {
-                Map.Entry pair = (Map.Entry) it.next();
-                String aux = pair.getKey() + "," + pair.getValue();
-                out.println(aux);
-                it.remove(); // avoids a ConcurrentModificationException
-            }
-        }
-    }
-
-    //EXTRA ************************************************************************************************************
+    //SAVE ************************************************************************************************************
 
     public void savePSMetadata() {
         serialize(this.termsMap, tPath);
@@ -210,67 +168,54 @@ public class InvertedIndex implements Serializable {
         doc = 0;
         start = System.currentTimeMillis();
         for (File file : new File(fIndexPath).listFiles()) {
+            now = System.currentTimeMillis();
             ArrayList<LinkedList<Object>> fowardIndex = (ArrayList<LinkedList<Object>>) deserialize(file.getAbsolutePath());
+            System.out.println("Processing WRAC: " + file.getName());
             LinkedList<Object> aux;
             Iterator it = fowardIndex.iterator();
-            //start =  System.currentTimeMillis();
+            deserializeTime += (System.currentTimeMillis() - now);
             while (it.hasNext()) {
                 aux = (LinkedList) it.next();
                 this.bufferedIndex((String[]) aux.getLast(), (String) aux.getFirst());
                 doc++;
             }
-            //this.dumpBuffer2(file.getName());
-            //pointer = 0;
         }
     }
 
     public void bufferedIndex(String[] words, String title) {
         /* We use a temporaney HashMap to process the single documents present in the WRAC document and the we flush it
-        and then we flush it in the buffer */
-
+        and then we flush it in the buffer. The important thing is to do not add duplicate and do not get self pairs */
 
         HashMap<Integer, Integer> docFreq = new HashMap<>();    //auxFreq counts for each term how many times is used into the document
-        HashSet<String> auxPair = new HashSet<>();
         for (int wIx = 0; wIx < words.length; wIx++) {
-            if (wIx < words.length - this.distance) {
-                for (int dIx = 1; dIx < this.distance; dIx++) {
-                    String[] pair2Sort = {words[wIx], words[wIx + dIx]};
-                    Arrays.sort(pair2Sort);
-                    String pair = pair2Sort[0] + "-" + pair2Sort[1];
-                    auxPair.add(pair);
-                }
-            }
             if (docFreq.putIfAbsent((getWId(words[wIx])), 1) != null) {
                 docFreq.merge(getWId(words[wIx]), 1, Integer::sum);    //modified from this.freqTermDoc errore
             }
         }
-        this.map2Buffer(docFreq, auxPair, words.length, getDId(title));
+        HashSet<Integer> auxPair = new HashSet<>();
+        for (int wIx = 0; wIx < words.length - this.distance; wIx++) {
+            for (int dIx = wIx+1; dIx < wIx + this.distance; dIx++) {
+                int [] pair = {getWId(words[wIx]), getWId(words[dIx])};
+                Arrays.sort(pair);
+                if(auxPair.add(pair[0]+pair[1]) == true) {
+                    this.add2Buffer(docFreq, pair[0], pair[1], words.length, getDId(title));
+                }
+            }
+        }
     }
 
-    public void map2Buffer(HashMap<Integer, Integer> docFreq, HashSet<String> pairs, int docSize, int docId) {
+    public void add2Buffer(HashMap<Integer, Integer> docFreq, int e1, int e2, int docSize, int docId) {
         //We want to avoid huge hashmaps and for each warc document we flush it in a static data structure
-
-        String pair;
-        String[] words;
-        Iterator it = pairs.iterator();
-        while (it.hasNext()) {
-            pair = it.next().toString();
-            words = pair.split("-");
-            int e1 = getWId(words[0]);
-            int e2 = getWId(words[1]);
-            //System.out.println(pair);
-            this.buffer[pointer][0] = e1;
-            this.buffer[pointer][1] = e2;
-            this.buffer[pointer][2] = docId;
-            this.buffer[pointer][3] = getBM25(e1, docSize, docFreq.get(e1));
-            this.buffer[pointer][4] = getBM25(e2, docSize, docFreq.get(e2));
-            if (pointer == buffer.length - 1) {
-                naturalSelection();
-                //pointer = (this.buffer.length/100)*20; we don't want to reuse it
-                pointer = 0;
-            } else pointer++;
-            it.remove(); // avoids a ConcurrentModificationException
-        }
+        this.buffer[pointer][0] = e1;
+        this.buffer[pointer][1] = e2;
+        this.buffer[pointer][2] = docId;
+        this.buffer[pointer][3] = getBM25(e1, docSize, docFreq.get(e1));
+        this.buffer[pointer][4] = getBM25(e2, docSize, docFreq.get(e2));
+        if (pointer == buffer.length - 1){
+            naturalSelection();
+            //pointer = (this.buffer.length/100)*20; we don't want to reuse it
+            pointer = 0;
+        }else pointer++;
     }
 
     public int getBM25(int id, int docLen, int f) {
@@ -293,122 +238,60 @@ public class InvertedIndex implements Serializable {
         return this.docsMap.get(word);
     }
 
-    public static double boundedKeep(int diff){
+    public static double boundedKeep(int diff) {
         /*we want to preserve the short lists and cut the long ones. The bounds are 100 and 1000. We have four cases
         * 20% > 1000  ->    keep 1000
         * 20% > 100   ->    keep 20%
         * diff > 100  ->    keep 100
         * diff < 100  ->    keep diff */
 
-        return (diff*0.2 > 1000) ? 1000 : (diff*0.2 > 100) ? diff*0.2 : (diff > 100) ? 100 : diff;
+        return (diff * 0.2 > 1000) ? 1000 : (diff * 0.2 > 100) ? diff * 0.2 : (diff > 100) ? 100 : diff;
     }
-
 
     public void naturalSelection() {
         //
         System.out.println("TIME TO CLEAN. Processed docs: " + doc);
-        now = System.currentTimeMillis();
         this.sortBuffer();
-        int [] nowPosting = this.buffer[0];
-        int shifter = 0;
+        now = System.currentTimeMillis();
+        int[] nowPosting = this.buffer[0];
         int startPointer = 0;
         int keep;
-        for (int k = 0; k < this.buffer.length; k++) {
-            if (this.buffer[k][0] != nowPosting[0] | this.buffer[k][1] != nowPosting[1] | k == this.buffer.length - 1) {
-                keep = (int) boundedKeep(k-startPointer);
-                for (int k2 = startPointer; k2 < startPointer + keep; k2++) {
-                    this.buffer[k2 - shifter][0] = this.buffer[k2][0];
-                    this.buffer[k2 - shifter][1] = this.buffer[k2][1];
-                    this.buffer[k2 - shifter][2] = this.buffer[k2][2];
-                    this.buffer[k2 - shifter][3] = this.buffer[k2][3];
-                    this.buffer[k2 - shifter][4] = this.buffer[k2][4];
+        StringBuilder toFlush = new StringBuilder();
+        File file = new File(dPath + "/" + "upto" + doc + ".txt");
+        try (FileWriter FW = new FileWriter(file);
+                BufferedWriter writer = new BufferedWriter(FW)) {
+            for (int k = 0; k < this.buffer.length; k++) {
+                if (this.buffer[k][0] != nowPosting[0] | this.buffer[k][1] != nowPosting[1] | k == this.buffer.length - 1) {
+                    keep = (int) boundedKeep(k - startPointer);
+                    for (int k2 = startPointer; k2 < startPointer + keep; k2++) {
+                        writer.append(this.buffer[k2][0] + "," + this.buffer[k2][1] + "," + (this.buffer[k2][3] + this.buffer[k2][4]) + "," + this.buffer[k2][2] + "\n");
+                    }
+                    startPointer = k;
+                    nowPosting = this.buffer[startPointer];
                 }
-                //this.buffer[startPointer + keep - 1 - shifter][3] = 123456789;
-                shifter += (k-startPointer) - keep; //we are going to overwrite the elements that we don't want to keep
-                startPointer = k;
-                nowPosting = this.buffer[startPointer];
-            }
-
+            }writer.close();
+            FW.close();
+        } catch (IOException e) {
+            e.printStackTrace();
         }
-
-
-        System.out.println("Sorting Time: " + (System.currentTimeMillis() - now) + "ms. Processing Time:" + 1000 / ((System.currentTimeMillis() - start) / doc) + "doc/sec");
-        this.dumpBuffer3("upto" + doc, this.buffer.length-shifter);
+        System.out.println("Flush Time:" + (System.currentTimeMillis() - now) + "ms");
+        System.out.println("Processing Time:" + (doc / (System.currentTimeMillis() - start - deserializeTime)) * 1000 + " doc/s");
     }
 
     public void sortBuffer() {
+        now = System.currentTimeMillis();
         Arrays.sort(this.buffer, new Comparator<int[]>() {
             @Override
             public int compare(int[] int1, int[] int2) {
                 //if we have the same doc ids sort them based on the bm25
                 if (int1[0] == int2[0]) {
                     if (int1[1] == int2[1]) {
-                        return Integer.compare(int1[3] + int1[4], int2[3] + int2[4]);
+                        return Integer.compare(int1[3] + int1[4], int2[3] + int2[4]) * -1;
                     } else return Integer.compare(int1[1], int2[1]);
                 } else return Integer.compare(int1[0], int2[0]);
             }
         });
-    }
-
-
-    // STORE INVERTED INDEX ********************************************************************************************
-
-    public void dumpBuffer(String name) {
-        // Save the partial inverted index (a.k.a buffer) to disk
-
-        String prefix;
-        StringBuilder toFlush = new StringBuilder();
-        for (int[] entry : this.buffer) {
-            prefix = "";
-            for (int num : entry) {
-                toFlush.append(prefix + num);
-                prefix = ",";
-            }
-            toFlush.append("\n");
-        }
-        File file = new File("dumps/" + name + ".txt");
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
-            writer.append(toFlush);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void dumpBuffer2(String name) {
-        // Save the partial inverted index (a.k.a buffer) to disk
-
-        this.sortBuffer();
-        StringBuilder toFlush = new StringBuilder();
-        for (int[] entry : this.buffer) {
-            toFlush.append(entry[0] + "," + entry[1] + "," + (entry[3] + entry[4]) + "," + entry[2] + "\n");
-        }
-        File file = new File("dumps/" + name + ".txt");
-
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
-            writer.append(toFlush);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void dumpBuffer3(String name, int limit) {
-        // Save the partial inverted index (a.k.a buffer) to disk
-
-        //this.sortBuffer();
-        StringBuilder toFlush = new StringBuilder();
-        int entry[];
-        for (int k = 0; k < limit; k++) {
-            entry = this.buffer[k];
-            toFlush.append(entry[0] + "," + entry[1] + "," + (entry[3] + entry[4]) + "," + entry[2] + "\n");
-        }
-        System.out.println(limit);
-        File file = new File(dPath + "/" + name + ".txt");
-
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
-            writer.append(toFlush);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        System.out.println("Sorting Time: " + (System.currentTimeMillis() - now) + "ms");
     }
 
 }
@@ -418,68 +301,3 @@ public class InvertedIndex implements Serializable {
 
 
 
- /*  public static void main(String [] args) throws IOException {
-        String data = "/home/aalto/IdeaProjects/PredictiveIndex/data/test";
-        InvertedIndex ps;
-        if (Files.exists(Paths.get(tPath+ser))) {
-            System.out.println("Deserializing Predictive Inverted...");
-            ps = new InvertedIndex((HashMap<String, Integer>) deserialize(tPath+ser),  (HashMap<Integer, Integer>) deserialize(fPath+ser),
-                    (HashMap<String, Integer>) deserialize(docMapPath+ser), (int[]) deserialize(sPath+ser));
-            System.out.println("Predictive Index Deserialized");
-        }else {
-            ps = new InvertedIndex();
-            ps.getCollectionMetadata(data);
-        }
-        ps.buildIndex();//
-        //ImpactModel.buildImpactModel();
-    }
-}
-
-
-
-    Integer t1 = -1;
-        Integer t2 = -1;
-        String prefix="";
-        StringBuilder toFlush = new StringBuilder();
-        for(int [] entry : this.buffer){
-            if(entry[0]!=t1 | entry[1]!=t2){
-                toFlush.append(prefix+entry[0]+","+entry[1]+","+entry[2]);
-                prefix="\n";
-            }else toFlush.append(","+entry[2]);
-            t1=entry[0];
-            t2=entry[1];
-        }
-
-
-        *********************************************************
-        *
-        *
-        * StringBuilder toFlush = new StringBuilder();
-        for(int [] entry : this.buffer){
-            toFlush.append(entry[0]+","+entry[1]+","+(entry[3]+entry[4])+","+entry[2]+"\n");
-
-        }
- */
-
-
-    /*public ArrayList deserialize(File file){
-        ArrayList<LinkedList> e = null;
-        try
-        {
-            FileInputStream fileIn = new FileInputStream(file);
-            ObjectInputStream in = new ObjectInputStream(fileIn);
-            e = (ArrayList<LinkedList>) in.readObject();
-            in.close();
-            fileIn.close();
-            return e;
-        }catch(IOException i)
-        {
-            i.printStackTrace();
-            return null;
-        }catch(ClassNotFoundException c)
-        {
-            System.out.println("Object not found");
-            c.printStackTrace();
-            return null;
-        }
-    }*/

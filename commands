@@ -1,9 +1,24 @@
-sort -n -r -m -k1 -k2 -k3 -k4 00.warc.gz.ser.txt 01.warc.gz.ser.txt > merge.txt
+sort -n -r -m -k1 -k2 -k3 * > merge.txt
 
-awk -F',' -v OFS=',' '{k=$1 OFS $2; a[k]=k in a?a[k] OFS $4:$4} END{for(k in a) print k, a[k]}' merge.txt > posting.txt
+cut --complement -f 3 -d, merge.txt 
+
+awk -F',' -v OFS=',' '{k=$1 OFS $2; a[k]=k in a?a[k] OFS $3:$3} END{for(k in a) print k, a[k]}' merge.txt > posting.txt
 
 awk -F',' '{print NF","$0}' posting.txt > count.txt
 
 sort -n count.txt > finale.txt
 
 cut --complement -f 1 -d, finale.txt > finale2.txt
+
+we have to remove the scores once we have merged the files.
+
+cut --complement -f 3 -d, merge.txt remove the bm25 score
+
+
+45sec
+30min empty result
+
+
+
+
+sort -n -r -m -k1 -k2 -k3 * | cut --complement -f 3 -d, | awk -F',' -v OFS=',' '{k=$1 OFS $2; a[k]=k in a?a[k] OFS $3:$3} END{for(k in a) print k, a[k]}' > postings.txt
