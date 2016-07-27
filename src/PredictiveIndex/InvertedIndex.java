@@ -96,6 +96,8 @@ public class InvertedIndex implements Serializable {
     }
 
     public void processWARCRecord(String[] words, String title) {
+        //this function process the single wrac files
+        
         this.docsMap.putIfAbsent(title, this.stats[0]);
         HashMap<String, Integer> auxHash = new HashMap<>();
         for (String word : words) {
