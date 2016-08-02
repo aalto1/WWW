@@ -1,4 +1,4 @@
-sort -n -r -m -k1 -k2 -k3 * > merge.txt
+sort -n -r -m -t"," -k1 -k2 -k3 * > merge.txt
 
 cut --complement -f 3 -d, merge.txt 
 

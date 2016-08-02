@@ -16,7 +16,7 @@ public class PredictiveIndex {
 
     public static void main(String [] args) throws IOException {
         ///*
-        String data = "/home/aalto/IdeaProjects/PredictiveIndex/data/test";
+        String data = "/home/aalto/IdeaProjects/PredictiveIndex/data/en0000";
         InvertedIndex ps;
         if (Files.exists(Paths.get(tPath+ser))) {
             System.out.println("Deserializing Predictive Inverted...");
@@ -25,7 +25,8 @@ public class PredictiveIndex {
             System.out.println("Predictive Index Deserialized");
         }else {
             ps = new InvertedIndex();
-            ps.getCollectionMetadata(data);
+            ps.getCollectionMetadata2(data);
+            //ps.readFromBinaryFile(fIndexPath + "/fowardIndex.dat");
         }
         ps.buildIndex();
         //*/

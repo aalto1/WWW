@@ -35,11 +35,8 @@
 package PredictiveIndex;
 
 import java.io.*;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedList;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Set;
 
 public class WarcRecord {
 
@@ -588,6 +585,17 @@ public class WarcRecord {
     String [] bagOfWords = HtmlpageCleaner.startProcess(aux).split(" ");
     recordData.addLast(bagOfWords);
     return recordData;
+  }
+
+  public String[] getCleanRecord2(){
+    WarcHTMLResponseRecord htmlRecord=new WarcHTMLResponseRecord(this);
+    // get our TREC ID and target URI
+    String aux = htmlRecord.getRawRecord().getContentUTF8();
+    String [] bagOfWords = HtmlpageCleaner.startProcess(aux).split(" ");
+    String [] myArray = Arrays.copyOf(bagOfWords,bagOfWords.length+1);
+    String thisTRECID=htmlRecord.getTargetTrecID().replace("-","");
+    myArray[myArray.length-1] = htmlRecord.getTargetURI();
+    return myArray;
   }
   
 }
